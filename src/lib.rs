@@ -15,6 +15,7 @@ pub mod db;
 pub mod error;
 pub mod iterator;
 pub mod memtable;
+pub mod monitoring;
 pub mod sstable;
 pub mod stats;
 pub mod transaction;

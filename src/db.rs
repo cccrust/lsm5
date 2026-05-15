@@ -37,6 +37,9 @@ pub struct Lsm5 {
     cache: crate::cache::LruCache<u64, Vec<u8>>,
     cache_hits: u64,
     cache_misses: u64,
+    /// Monitoring server (if enabled)
+    #[allow(dead_code)]
+    monitoring: Option<crate::monitoring::MonitoringServer>,
 }
 
 impl Lsm5 {
@@ -67,6 +70,14 @@ impl Lsm5 {
             .max()
             .unwrap_or(0);
 
+        let monitoring = if config.monitoring_enabled {
+            let mut server = crate::monitoring::MonitoringServer::new(config.monitoring_port);
+            server.start();
+            Some(server)
+        } else {
+            None
+        };
+
         Ok(Lsm5 {
             config,
             wal,
@@ -82,6 +93,7 @@ impl Lsm5 {
             cache: crate::cache::LruCache::new(cache_size),
             cache_hits: 0,
             cache_misses: 0,
+            monitoring,
         })
     }
 

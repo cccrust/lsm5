@@ -11,6 +11,8 @@ pub struct Config {
     pub compression_enabled: bool,
     pub compression_level: i32,
     pub cache_size: usize,
+    pub monitoring_enabled: bool,
+    pub monitoring_port: u16,
 }
 
 impl Config {
@@ -25,6 +27,8 @@ impl Config {
             compression_enabled: true,
             compression_level: 3,
             cache_size: 64 * 1024 * 1024,
+            monitoring_enabled: false,
+            monitoring_port: 8080,
         }
     }
 
@@ -65,6 +69,16 @@ impl Config {
 
     pub fn cache_size(mut self, bytes: usize) -> Self {
         self.cache_size = bytes;
+        self
+    }
+
+    pub fn monitoring_enabled(mut self, enabled: bool) -> Self {
+        self.monitoring_enabled = enabled;
+        self
+    }
+
+    pub fn monitoring_port(mut self, port: u16) -> Self {
+        self.monitoring_port = port;
         self
     }
 }
