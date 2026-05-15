@@ -17,6 +17,7 @@ pub mod error;
 pub mod iterator;
 pub mod memtable;
 pub mod monitoring;
+pub mod query_plan;
 pub mod scan_cache;
 pub mod sstable;
 pub mod stats;

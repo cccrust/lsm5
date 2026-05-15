@@ -113,6 +113,67 @@ impl Lsm5 {
         Ok(())
     }
 
+    /// Batch write multiple key-value pairs.
+    /// More efficient than individual put() calls.
+    pub fn write_batch(
+        &mut self,
+        entries: Vec<(impl Into<Vec<u8>>, impl Into<Vec<u8>>)>,
+    ) -> Result<()> {
+        for (key, value) in entries {
+            let key = key.into();
+            let value = value.into();
+            self.wal.append_put(&key, &value)?;
+            self.memtable.put(key, value);
+            self.writes += 1;
+        }
+        if self.config.sync_writes {
+            self.wal.sync()?;
+        }
+        self.maybe_flush()?;
+        Ok(())
+    }
+
+    /// Analyze a scan query and return an optimized plan.
+    pub fn analyze_scan(&self, start: &[u8], end: &[u8]) -> crate::query_plan::ScanPlan {
+        let plan = crate::query_plan::ScanPlan::new(start, end);
+
+        // Determine which levels need scanning
+        let mut levels = Vec::new();
+        for (i, level) in self.levels.iter().enumerate() {
+            // Check if level has overlapping keys
+            let has_overlap = level.iter().any(|m| {
+                (!m.min_key.is_empty() && m.min_key.as_slice() < end)
+                    && (!m.max_key.is_empty() && m.max_key.as_slice() > start)
+            });
+            if has_overlap || level.is_empty() {
+                levels.push(i);
+            }
+        }
+
+        // Add memtable if it has data in range
+        if !self.memtable.is_empty() {
+            levels.insert(0, 999); // 999 = memtable
+        }
+
+        // Estimate key count based on file sizes
+        let total_size: u64 = self
+            .levels
+            .iter()
+            .flat_map(|l| l.iter())
+            .map(|m| m.file_size)
+            .sum();
+        let estimated = (total_size / 1024) as usize;
+        let level_count = levels.len();
+
+        plan.with_levels(levels)
+            .with_estimated_keys(estimated)
+            .with_cost(if level_count <= 2 {
+                crate::query_plan::CostLevel::Low
+            } else {
+                crate::query_plan::CostLevel::Medium
+            })
+    }
+
     /// Delete a key (inserts a tombstone).
     pub fn delete(&mut self, key: impl Into<Vec<u8>>) -> Result<()> {
         let key = key.into();

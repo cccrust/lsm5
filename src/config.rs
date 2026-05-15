@@ -12,6 +12,8 @@ pub struct Config {
     pub compression_level: i32,
     pub cache_size: usize,
     pub scan_cache_size: usize,
+    pub write_buffer_size: usize,
+    pub write_buffer_flush_threshold: usize,
     pub monitoring_enabled: bool,
     pub monitoring_port: u16,
     pub background_threads: usize,
@@ -30,6 +32,8 @@ impl Config {
             compression_level: 3,
             cache_size: 64 * 1024 * 1024,
             scan_cache_size: 32 * 1024 * 1024,
+            write_buffer_size: 1024 * 1024,
+            write_buffer_flush_threshold: 512 * 1024,
             monitoring_enabled: false,
             monitoring_port: 8080,
             background_threads: 2,
@@ -93,6 +97,16 @@ impl Config {
 
     pub fn scan_cache_size(mut self, bytes: usize) -> Self {
         self.scan_cache_size = bytes;
+        self
+    }
+
+    pub fn write_buffer_size(mut self, bytes: usize) -> Self {
+        self.write_buffer_size = bytes.max(1024);
+        self
+    }
+
+    pub fn write_buffer_flush_threshold(mut self, bytes: usize) -> Self {
+        self.write_buffer_flush_threshold = bytes.max(512);
         self
     }
 }
