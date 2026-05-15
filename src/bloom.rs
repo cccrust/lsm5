@@ -13,7 +13,7 @@ impl BloomFilter {
     pub fn new(capacity: usize, false_positive_rate: f64) -> Self {
         let num_bits = Self::optimal_bits(capacity, false_positive_rate).max(64);
         let num_hashes = Self::optimal_hashes(num_bits, capacity).max(1);
-        let words = (num_bits + 63) / 64;
+        let words = num_bits.div_ceil(64);
         BloomFilter {
             bits: vec![0u64; words],
             num_bits,
@@ -23,12 +23,22 @@ impl BloomFilter {
 
     /// Reconstruct a BloomFilter from raw bytes (for SSTable deserialization).
     pub fn from_raw(bits: Vec<u64>, num_bits: usize, num_hashes: usize) -> Self {
-        BloomFilter { bits, num_bits, num_hashes }
+        BloomFilter {
+            bits,
+            num_bits,
+            num_hashes,
+        }
     }
 
-    pub fn num_bits(&self) -> usize { self.num_bits }
-    pub fn num_hashes(&self) -> usize { self.num_hashes }
-    pub fn raw_bits(&self) -> &[u64] { &self.bits }
+    pub fn num_bits(&self) -> usize {
+        self.num_bits
+    }
+    pub fn num_hashes(&self) -> usize {
+        self.num_hashes
+    }
+    pub fn raw_bits(&self) -> &[u64] {
+        &self.bits
+    }
 
     pub fn insert(&mut self, key: &[u8]) {
         let (h1, h2) = self.hashes(key);
@@ -93,18 +103,28 @@ mod tests {
     #[test]
     fn test_bloom_no_false_negatives() {
         let mut bf = BloomFilter::new(1000, 0.01);
-        let keys: Vec<Vec<u8>> = (0..500).map(|i| format!("key-{}", i).into_bytes()).collect();
-        for k in &keys { bf.insert(k); }
-        for k in &keys { assert!(bf.may_contain(k), "False negative for {:?}", k); }
+        let keys: Vec<Vec<u8>> = (0..500)
+            .map(|i| format!("key-{}", i).into_bytes())
+            .collect();
+        for k in &keys {
+            bf.insert(k);
+        }
+        for k in &keys {
+            assert!(bf.may_contain(k), "False negative for {:?}", k);
+        }
     }
 
     #[test]
     fn test_bloom_fpr_reasonable() {
         let mut bf = BloomFilter::new(1000, 0.01);
-        for i in 0..1000u32 { bf.insert(&i.to_le_bytes()); }
+        for i in 0..1000u32 {
+            bf.insert(&i.to_le_bytes());
+        }
         let mut fp = 0;
         for i in 1000..11000u32 {
-            if bf.may_contain(&i.to_le_bytes()) { fp += 1; }
+            if bf.may_contain(&i.to_le_bytes()) {
+                fp += 1;
+            }
         }
         // Allow up to 5% FPR in practice
         assert!(fp < 500, "Too many false positives: {}", fp);
@@ -135,5 +155,3 @@ mod tests {
         assert!(bf2.may_contain(b"testkey"));
     }
 }
-
-    

@@ -1,3 +1,4 @@
+use crate::error::{Error, Result};
 /// Write-Ahead Log (WAL)
 ///
 /// Binary record format per entry:
@@ -7,11 +8,9 @@
 ///   [N bytes] key
 ///   [M bytes] value
 ///   [4 bytes] CRC32 of (op_type | key_len | val_len | key | value)
-
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
-use crate::error::{Error, Result};
 
 const OP_PUT: u8 = 0x01;
 const OP_DELETE: u8 = 0x02;
@@ -29,10 +28,7 @@ pub struct Wal {
 impl Wal {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)?;
+        let file = OpenOptions::new().create(true).append(true).open(&path)?;
         Ok(Wal {
             path,
             writer: BufWriter::new(file),
@@ -87,17 +83,21 @@ impl Wal {
             let stored_crc = read_u32(&mut reader)?;
             let computed_crc = crc32(&op_buf, key_len as u32, val_len as u32, &key, &value);
             if stored_crc != computed_crc {
-                return Err(Error::WalReplayError(
-                    format!("CRC mismatch at record (key={:?})", String::from_utf8_lossy(&key))
-                ));
+                return Err(Error::WalReplayError(format!(
+                    "CRC mismatch at record (key={:?})",
+                    String::from_utf8_lossy(&key)
+                )));
             }
 
             match op_type {
                 OP_PUT => records.push(WalRecord::Put { key, value }),
                 OP_DELETE => records.push(WalRecord::Delete { key }),
-                _ => return Err(Error::WalReplayError(
-                    format!("Unknown op_type: 0x{:02x}", op_type)
-                )),
+                _ => {
+                    return Err(Error::WalReplayError(format!(
+                        "Unknown op_type: 0x{:02x}",
+                        op_type
+                    )))
+                }
             }
         }
 
@@ -208,7 +208,7 @@ fn crc32(op: &[u8], key_len: u32, val_len: u32, key: &[u8], value: &[u8]) -> u32
         for &b in data {
             *crc ^= b as u32;
             for _ in 0..8 {
-                let mask = ((*crc & 1).wrapping_neg()) as u32;
+                let mask = (*crc & 1).wrapping_neg();
                 *crc = (*crc >> 1) ^ (0xEDB88320 & mask);
             }
         }

@@ -22,7 +22,6 @@
 ///
 /// Footer (32 bytes):
 ///   [8] index_offset | [8] bloom_offset | [8] data_len | [8] magic=0x4C534D35_46494C45
-
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -67,7 +66,11 @@ pub struct SsTableWriter {
 
 impl SsTableWriter {
     pub fn create(path: impl AsRef<Path>, capacity_hint: usize) -> Result<Self> {
-        let file = OpenOptions::new().create(true).write(true).truncate(true).open(path)?;
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(path)?;
         let bloom_cap = capacity_hint.max(BLOOM_CAPACITY);
         Ok(SsTableWriter {
             writer: BufWriter::new(file),
@@ -83,7 +86,10 @@ impl SsTableWriter {
     /// Append one key-value entry (must be called in sorted key order).
     pub fn add(&mut self, key: &[u8], value: &Value) -> Result<()> {
         let current_offset = self.data_offset;
-        self.index.push(IndexEntry { key: key.to_vec(), offset: current_offset });
+        self.index.push(IndexEntry {
+            key: key.to_vec(),
+            offset: current_offset,
+        });
         self.bloom.insert(key);
 
         let (val_bytes, is_tombstone): (&[u8], u8) = match value {
@@ -141,7 +147,10 @@ impl SsTableWriter {
 
         self.writer.flush()?;
 
-        let path = self.writer.get_ref().metadata()
+        let path = self
+            .writer
+            .get_ref()
+            .metadata()
             .ok()
             .map(|_| ()) // just to check it's still open
             .map(|_| PathBuf::new()) // placeholder — will be set by caller
@@ -162,7 +171,10 @@ impl SsTableWriter {
     }
 
     fn index_block_size(&self) -> u64 {
-        self.index.iter().map(|e| (4 + e.key.len() + 8) as u64).sum()
+        self.index
+            .iter()
+            .map(|e| (4 + e.key.len() + 8) as u64)
+            .sum()
     }
 }
 
@@ -213,7 +225,7 @@ impl SsTableReader {
         file.seek(SeekFrom::Start(bloom_offset))?;
         let num_bits = read_u64(&mut file)? as usize;
         let num_hashes = read_u64(&mut file)? as usize;
-        let num_words = (num_bits + 63) / 64;
+        let num_words = num_bits.div_ceil(64);
         let mut bits = vec![0u64; num_words];
         for w in &mut bits {
             let mut buf = [0u8; 8];
@@ -222,7 +234,12 @@ impl SsTableReader {
         }
         let bloom = BloomFilter::from_raw(bits, num_bits, num_hashes);
 
-        Ok(SsTableReader { path, index, bloom, data_len })
+        Ok(SsTableReader {
+            path,
+            index,
+            bloom,
+            data_len,
+        })
     }
 
     /// Point lookup. Returns None if definitely absent (bloom says no or past end-of-data).
@@ -263,7 +280,11 @@ impl SsTableReader {
             pos += (4 + 4 + 1 + kl + vl) as u64;
 
             if k.as_slice() == key {
-                return Ok(Some(if is_tombstone { Value::Tombstone } else { Value::Data(v) }));
+                return Ok(Some(if is_tombstone {
+                    Value::Tombstone
+                } else {
+                    Value::Data(v)
+                }));
             }
             if k.as_slice() > key {
                 break;
@@ -290,7 +311,14 @@ impl SsTableReader {
             file.read_exact(&mut k)?;
             file.read_exact(&mut v)?;
             pos += (4 + 4 + 1 + kl + vl) as u64;
-            entries.push((k, if is_tombstone { Value::Tombstone } else { Value::Data(v) }));
+            entries.push((
+                k,
+                if is_tombstone {
+                    Value::Tombstone
+                } else {
+                    Value::Data(v)
+                },
+            ));
         }
 
         Ok(entries)
@@ -357,8 +385,14 @@ mod tests {
         write_sstable(&path, &entries, 0, 1).unwrap();
 
         let reader = SsTableReader::open(&path).unwrap();
-        assert_eq!(reader.get(b"apple").unwrap(), Some(Value::Data(b"fruit".to_vec())));
-        assert_eq!(reader.get(b"banana").unwrap(), Some(Value::Data(b"yellow".to_vec())));
+        assert_eq!(
+            reader.get(b"apple").unwrap(),
+            Some(Value::Data(b"fruit".to_vec()))
+        );
+        assert_eq!(
+            reader.get(b"banana").unwrap(),
+            Some(Value::Data(b"yellow".to_vec()))
+        );
         assert_eq!(reader.get(b"cherry").unwrap(), Some(Value::Tombstone));
         assert_eq!(reader.get(b"grape").unwrap(), None);
     }
@@ -368,7 +402,12 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test2.sst");
         let entries: Vec<_> = (0..10u32)
-            .map(|i| (format!("k{:04}", i).into_bytes(), Value::Data(i.to_be_bytes().to_vec())))
+            .map(|i| {
+                (
+                    format!("k{:04}", i).into_bytes(),
+                    Value::Data(i.to_be_bytes().to_vec()),
+                )
+            })
             .collect();
         write_sstable(&path, &entries, 0, 1).unwrap();
 

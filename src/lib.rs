@@ -8,11 +8,11 @@
 //   Level-1..N SSTables  (sorted, no overlaps within a level)
 
 pub mod bloom;
+pub mod compaction;
+pub mod db;
 pub mod error;
 pub mod memtable;
 pub mod sstable;
-pub mod compaction;
-pub mod db;
 pub mod wal;
 
 pub use db::Lsm5;

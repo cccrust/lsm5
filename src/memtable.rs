@@ -71,7 +71,9 @@ impl MemTable {
 
     /// Drain all entries for flushing. Resets the MemTable.
     pub fn drain_sorted(&mut self) -> Vec<(Vec<u8>, Value)> {
-        let entries: Vec<_> = self.map.iter()
+        let entries: Vec<_> = self
+            .map
+            .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
         self.map.clear();
@@ -81,7 +83,9 @@ impl MemTable {
 }
 
 impl Default for MemTable {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]

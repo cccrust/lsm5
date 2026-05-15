@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 /// Compaction
 ///
 /// Strategy: Leveled compaction (similar to LevelDB/RocksDB).
@@ -10,14 +11,15 @@
 ///
 /// Compaction merges sorted runs via k-way merge, dropping
 /// tombstones at the bottommost level.
-
 use std::collections::BinaryHeap;
-use std::cmp::Reverse;
 use std::path::Path;
 
 use crate::error::Result;
 use crate::memtable::Value;
-use crate::sstable::{SsTableMeta, SsTableReader, write_sstable};
+use crate::sstable::{write_sstable, SsTableMeta, SsTableReader};
+
+pub type Entries = Vec<(Vec<u8>, Value)>;
+pub type SstableEntries = Vec<Entries>;
 
 pub const L0_COMPACTION_TRIGGER: usize = 4;
 pub const MAX_LEVELS: usize = 7;
@@ -25,8 +27,8 @@ pub const MAX_LEVELS: usize = 7;
 /// Size threshold for each level (bytes).
 pub fn level_size_threshold(level: usize) -> u64 {
     match level {
-        0 => u64::MAX, // L0 is count-based, not size-based
-        1 => 10 * 1024 * 1024,        // 10 MB
+        0 => u64::MAX,                          // L0 is count-based, not size-based
+        1 => 10 * 1024 * 1024,                  // 10 MB
         l => 10u64.pow(l as u32) * 1024 * 1024, // 10^l MB
     }
 }
@@ -51,7 +53,8 @@ impl PartialOrd for HeapEntry {
 impl Ord for HeapEntry {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Min-heap by key; break ties by sequence (newer = higher seq wins)
-        self.key.cmp(&other.key)
+        self.key
+            .cmp(&other.key)
             .then(other.seq.cmp(&self.seq)) // larger seq = newer
             .then(other.src.cmp(&self.src))
     }
@@ -74,7 +77,12 @@ pub fn k_way_merge(
     // Seed the heap with the first entry from each iterator
     for (i, iter) in iters.iter_mut().enumerate() {
         if let Some((key, value)) = iter.next() {
-            heap.push(Reverse(HeapEntry { key, value, seq: seqs[i], src: i }));
+            heap.push(Reverse(HeapEntry {
+                key,
+                value,
+                seq: seqs[i],
+                src: i,
+            }));
         }
     }
 
@@ -84,7 +92,12 @@ pub fn k_way_merge(
     while let Some(Reverse(entry)) = heap.pop() {
         // Advance the corresponding iterator
         if let Some((key, value)) = iters[entry.src].next() {
-            heap.push(Reverse(HeapEntry { key, value, seq: seqs[entry.src], src: entry.src }));
+            heap.push(Reverse(HeapEntry {
+                key,
+                value,
+                seq: seqs[entry.src],
+                src: entry.src,
+            }));
         }
 
         // Skip older versions of the same key
@@ -106,11 +119,15 @@ pub fn k_way_merge(
 }
 
 /// Read all entries from a list of SSTables (used for compaction input).
-pub fn read_sstables(metas: &[&SsTableMeta]) -> Result<Vec<Vec<(Vec<u8>, Value)>>> {
-    metas.iter().map(|m| {
-        let reader = SsTableReader::open(&m.path)?;
-        reader.scan_all()
-    }).collect()
+#[allow(clippy::type_complexity)]
+pub fn read_sstables(metas: &[&SsTableMeta]) -> Result<SstableEntries> {
+    metas
+        .iter()
+        .map(|m| {
+            let reader = SsTableReader::open(&m.path)?;
+            reader.scan_all()
+        })
+        .collect()
 }
 
 /// Compact a set of SSTables into one or more output SSTables at `target_level`.
@@ -145,8 +162,11 @@ pub fn compact(
 
     let flush_chunk = |chunk: &mut Vec<(Vec<u8>, Value)>,
                        seq: &mut u64,
-                       metas: &mut Vec<SsTableMeta>| -> Result<()> {
-        if chunk.is_empty() { return Ok(()); }
+                       metas: &mut Vec<SsTableMeta>|
+     -> Result<()> {
+        if chunk.is_empty() {
+            return Ok(());
+        }
         *seq += 1;
         let path = output_dir.join(format!("L{}-{:016x}.sst", target_level, *seq));
         let meta = write_sstable(&path, chunk, target_level, *seq)?;
@@ -156,10 +176,11 @@ pub fn compact(
     };
 
     for (k, v) in merged {
-        let entry_size = (k.len() + match &v {
-            Value::Data(d) => d.len(),
-            Value::Tombstone => 0,
-        }) as u64;
+        let entry_size = (k.len()
+            + match &v {
+                Value::Data(d) => d.len(),
+                Value::Tombstone => 0,
+            }) as u64;
 
         if chunk_size + entry_size > max_sstable_size && !chunk.is_empty() {
             flush_chunk(&mut chunk, next_seq, &mut output_metas)?;

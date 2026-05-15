@@ -2,8 +2,16 @@
 
 set -e
 
-echo "Running cargo tests..."
+echo "=== Running cargo test ==="
 cargo test
 
 echo ""
-echo "All tests passed!"
+echo "=== Running cargo clippy ==="
+cargo clippy -- -D warnings
+
+echo ""
+echo "=== Running cargo fmt --check ==="
+cargo fmt --check
+
+echo ""
+echo "All checks passed!"

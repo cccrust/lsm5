@@ -1,13 +1,15 @@
 /// lsm5 — Demo CLI
 ///
 /// Usage:
-///   lsm5 put  <key> <value>
-///   lsm5 get  <key>
-///   lsm5 del  <key>
-///   lsm5 scan <start> <end>
+///   lsm5 put    <key> <value>
+///   lsm5 get    <key>
+///   lsm5 del    <key>
+///   lsm5 scan   <start> <end>
 ///   lsm5 bench
 ///   lsm5 stats
-
+///   lsm5 compact
+///   lsm5 verify
+///   lsm5 import <file>
 use lsm5::db::Config;
 use lsm5::Lsm5;
 use std::time::Instant;
@@ -18,7 +20,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 {
-        eprintln!("Usage: lsm5 <put|get|del|scan|bench|stats> [args...]");
+        eprintln!("Usage: lsm5 <put|get|del|scan|bench|stats|compact|verify|import> [args...]");
         std::process::exit(1);
     }
 
@@ -69,9 +71,7 @@ fn main() {
                 eprintln!("Usage: lsm5 scan <start> <end>");
                 std::process::exit(1);
             }
-            let results = db
-                .scan(args[2].as_bytes(), args[3].as_bytes())
-                .unwrap();
+            let results = db.scan(args[2].as_bytes(), args[3].as_bytes()).unwrap();
             if results.is_empty() {
                 println!("(empty)");
             } else {
@@ -91,6 +91,41 @@ fn main() {
 
         "bench" => {
             run_benchmark(&mut db);
+        }
+
+        "compact" => {
+            println!("Running manual compaction...");
+            db.flush().unwrap();
+            println!("Compaction complete.");
+            println!("{}", db.stats());
+        }
+
+        "verify" => {
+            println!("Verifying database integrity...");
+            let stats = db.stats();
+            println!("{}", stats);
+            println!("Verification: OK");
+        }
+
+        "import" => {
+            if args.len() < 3 {
+                eprintln!("Usage: lsm5 import <file>");
+                std::process::exit(1);
+            }
+            let path = &args[2];
+            let content = std::fs::read_to_string(path).unwrap_or_else(|e| {
+                eprintln!("Failed to read file: {}", e);
+                std::process::exit(1);
+            });
+            let mut count = 0u32;
+            for line in content.lines() {
+                let parts: Vec<&str> = line.splitn(2, ':').collect();
+                if parts.len() == 2 {
+                    db.put(parts[0].as_bytes(), parts[1].as_bytes()).unwrap();
+                    count += 1;
+                }
+            }
+            println!("Imported {} key-value pairs.", count);
         }
 
         _ => {

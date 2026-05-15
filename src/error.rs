@@ -6,6 +6,9 @@ pub enum Error {
     Corruption(String),
     KeyNotFound,
     WalReplayError(String),
+    InvalidConfig(String),
+    FileFormatError(String),
+    CompactionError(String),
 }
 
 impl std::fmt::Display for Error {
@@ -15,6 +18,9 @@ impl std::fmt::Display for Error {
             Error::Corruption(msg) => write!(f, "Data corruption: {}", msg),
             Error::KeyNotFound => write!(f, "Key not found"),
             Error::WalReplayError(msg) => write!(f, "WAL replay error: {}", msg),
+            Error::InvalidConfig(msg) => write!(f, "Invalid configuration: {}", msg),
+            Error::FileFormatError(msg) => write!(f, "File format error: {}", msg),
+            Error::CompactionError(msg) => write!(f, "Compaction error: {}", msg),
         }
     }
 }

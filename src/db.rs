@@ -4,13 +4,10 @@
 ///
 /// Read path:  MemTable → ImmutableMemTables → L0..LN SSTables
 /// Write path: WAL append → MemTable insert → (flush when full)
-
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::compaction::{
-    compact, level_size_threshold, L0_COMPACTION_TRIGGER, MAX_LEVELS,
-};
+use crate::compaction::{compact, level_size_threshold, L0_COMPACTION_TRIGGER, MAX_LEVELS};
 use crate::error::Result;
 use crate::memtable::{MemTable, Value};
 use crate::sstable::{write_sstable, SsTableMeta, SsTableReader};
@@ -34,7 +31,7 @@ impl Config {
         Config {
             dir: dir.as_ref().to_path_buf(),
             memtable_size_limit: 4 * 1024 * 1024, // 4 MB
-            max_sstable_size: 64 * 1024 * 1024,    // 64 MB
+            max_sstable_size: 64 * 1024 * 1024,   // 64 MB
             sync_writes: false,
         }
     }
@@ -88,7 +85,11 @@ impl Lsm5 {
 
         // Scan existing SSTable files
         let levels = Self::load_existing_sstables(&config.dir)?;
-        let seq: u64 = levels.iter().flat_map(|l: &Vec<SsTableMeta>| l.iter().map(|m| m.sequence)).max().unwrap_or(0);
+        let seq: u64 = levels
+            .iter()
+            .flat_map(|l: &Vec<SsTableMeta>| l.iter().map(|m| m.sequence))
+            .max()
+            .unwrap_or(0);
 
         Ok(Lsm5 {
             config,
@@ -218,10 +219,13 @@ impl Lsm5 {
             }
         }
 
-        let result = map.into_iter().filter_map(|(k, v)| match v {
-            Value::Data(d) => Some((k, d)),
-            Value::Tombstone => None,
-        }).collect();
+        let result = map
+            .into_iter()
+            .filter_map(|(k, v)| match v {
+                Value::Data(d) => Some((k, d)),
+                Value::Tombstone => None,
+            })
+            .collect();
 
         Ok(result)
     }
@@ -244,9 +248,11 @@ impl Lsm5 {
             memtable_entries: self.memtable.len(),
             memtable_size_bytes: self.memtable.size_bytes(),
             level_counts: self.levels.iter().map(|l| l.len()).collect(),
-            level_sizes: self.levels.iter().map(|l| {
-                l.iter().map(|m| m.file_size).sum()
-            }).collect(),
+            level_sizes: self
+                .levels
+                .iter()
+                .map(|l| l.iter().map(|m| m.file_size).sum())
+                .collect(),
         }
     }
 
@@ -270,7 +276,7 @@ impl Lsm5 {
         let path = self.config.dir.join(format!("L0-{:016x}.sst", self.seq));
         let meta = write_sstable(&path, &entries, 0, self.seq)?;
 
-        while self.levels.len() <= 0 {
+        while self.levels.is_empty() {
             self.levels.push(Vec::new());
         }
         self.levels[0].push(meta);
@@ -317,22 +323,27 @@ impl Lsm5 {
         }
 
         // Find key range of the compaction inputs
-        let min_key = level_files.iter()
+        let min_key = level_files
+            .iter()
             .map(|m| m.min_key.as_slice())
             .min()
             .unwrap_or(&[])
             .to_vec();
-        let max_key = level_files.iter()
+        let max_key = level_files
+            .iter()
             .map(|m| m.max_key.as_slice())
             .max()
             .unwrap_or(&[])
             .to_vec();
 
         // Find overlapping files at target level
-        let overlapping: Vec<&SsTableMeta> = self.levels[target_level].iter().filter(|m| {
-            m.min_key.as_slice() <= max_key.as_slice() &&
-            m.max_key.as_slice() >= min_key.as_slice()
-        }).collect();
+        let overlapping: Vec<&SsTableMeta> = self.levels[target_level]
+            .iter()
+            .filter(|m| {
+                m.min_key.as_slice() <= max_key.as_slice()
+                    && m.max_key.as_slice() >= min_key.as_slice()
+            })
+            .collect();
 
         let mut all_inputs: Vec<&SsTableMeta> = level_files;
         all_inputs.extend_from_slice(&overlapping);
@@ -382,7 +393,11 @@ impl Lsm5 {
                 continue;
             }
 
-            let fname = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            let fname = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
             // Expected format: L<level>-<hex_seq>
             let parts: Vec<&str> = fname.splitn(2, '-').collect();
             if parts.len() != 2 || !parts[0].starts_with('L') {
@@ -438,8 +453,11 @@ pub struct DbStats {
 impl std::fmt::Display for DbStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "=== LSM5 Database Statistics ===")?;
-        writeln!(f, "MemTable: {} entries, {} bytes",
-            self.memtable_entries, self.memtable_size_bytes)?;
+        writeln!(
+            f,
+            "MemTable: {} entries, {} bytes",
+            self.memtable_entries, self.memtable_size_bytes
+        )?;
         for (i, (count, size)) in self.level_counts.iter().zip(&self.level_sizes).enumerate() {
             if *count > 0 {
                 writeln!(f, "  L{}: {} SSTables, {} bytes", i, count, size)?;
@@ -492,14 +510,19 @@ mod tests {
 
         // Write enough to trigger a flush
         for i in 0..200u32 {
-            db.put(format!("key-{:05}", i), format!("value-{}", i)).unwrap();
+            db.put(format!("key-{:05}", i), format!("value-{}", i))
+                .unwrap();
         }
 
         // Verify all keys are still accessible
         for i in 0..200u32 {
             let val = db.get(format!("key-{:05}", i)).unwrap();
-            assert_eq!(val, Some(format!("value-{}", i).into_bytes()),
-                "key-{:05} mismatch", i);
+            assert_eq!(
+                val,
+                Some(format!("value-{}", i).into_bytes()),
+                "key-{:05} mismatch",
+                i
+            );
         }
     }
 
@@ -528,9 +551,15 @@ mod tests {
         }
         let results = db.scan("k03", "k07").unwrap();
         let keys: Vec<_> = results.iter().map(|(k, _)| k.clone()).collect();
-        assert_eq!(keys, vec![
-            b"k03".to_vec(), b"k04".to_vec(), b"k05".to_vec(), b"k06".to_vec()
-        ]);
+        assert_eq!(
+            keys,
+            vec![
+                b"k03".to_vec(),
+                b"k04".to_vec(),
+                b"k05".to_vec(),
+                b"k06".to_vec()
+            ]
+        );
     }
 
     #[test]
