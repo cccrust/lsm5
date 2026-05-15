@@ -7,50 +7,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub use crate::config::Config;
+pub use crate::stats::DbStats;
+
 use crate::compaction::{compact, level_size_threshold, L0_COMPACTION_TRIGGER, MAX_LEVELS};
 use crate::error::Result;
 use crate::memtable::{MemTable, Value};
 use crate::sstable::{write_sstable, SsTableMeta, SsTableReader};
 use crate::wal::{Wal, WalRecord};
-
-/// Configuration for the LSM engine.
-#[derive(Clone, Debug)]
-pub struct Config {
-    /// Directory for all data files.
-    pub dir: PathBuf,
-    /// MemTable flush threshold in bytes.
-    pub memtable_size_limit: usize,
-    /// Maximum SSTable size during compaction.
-    pub max_sstable_size: u64,
-    /// Whether to fsync the WAL on every write.
-    pub sync_writes: bool,
-}
-
-impl Config {
-    pub fn new(dir: impl AsRef<Path>) -> Self {
-        Config {
-            dir: dir.as_ref().to_path_buf(),
-            memtable_size_limit: 4 * 1024 * 1024, // 4 MB
-            max_sstable_size: 64 * 1024 * 1024,   // 64 MB
-            sync_writes: false,
-        }
-    }
-
-    pub fn memtable_size_limit(mut self, bytes: usize) -> Self {
-        self.memtable_size_limit = bytes;
-        self
-    }
-
-    pub fn max_sstable_size(mut self, bytes: u64) -> Self {
-        self.max_sstable_size = bytes;
-        self
-    }
-
-    pub fn sync_writes(mut self, sync: bool) -> Self {
-        self.sync_writes = sync;
-        self
-    }
-}
 
 /// The main LSM5 database handle.
 pub struct Lsm5 {
@@ -244,16 +208,15 @@ impl Lsm5 {
 
     /// Return database statistics.
     pub fn stats(&self) -> DbStats {
-        DbStats {
-            memtable_entries: self.memtable.len(),
-            memtable_size_bytes: self.memtable.size_bytes(),
-            level_counts: self.levels.iter().map(|l| l.len()).collect(),
-            level_sizes: self
-                .levels
+        DbStats::new(
+            self.memtable.len(),
+            self.memtable.size_bytes(),
+            self.levels.iter().map(|l| l.len()).collect(),
+            self.levels
                 .iter()
                 .map(|l| l.iter().map(|m| m.file_size).sum())
                 .collect(),
-        }
+        )
     }
 
     // ── Internal helpers ─────────────────────────────────────────────────────
@@ -438,32 +401,6 @@ impl Lsm5 {
         }
 
         Ok(levels)
-    }
-}
-
-/// Statistics about the current database state.
-#[derive(Debug)]
-pub struct DbStats {
-    pub memtable_entries: usize,
-    pub memtable_size_bytes: usize,
-    pub level_counts: Vec<usize>,
-    pub level_sizes: Vec<u64>,
-}
-
-impl std::fmt::Display for DbStats {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "=== LSM5 Database Statistics ===")?;
-        writeln!(
-            f,
-            "MemTable: {} entries, {} bytes",
-            self.memtable_entries, self.memtable_size_bytes
-        )?;
-        for (i, (count, size)) in self.level_counts.iter().zip(&self.level_sizes).enumerate() {
-            if *count > 0 {
-                writeln!(f, "  L{}: {} SSTables, {} bytes", i, count, size)?;
-            }
-        }
-        Ok(())
     }
 }
 

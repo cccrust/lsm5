@@ -9,11 +9,13 @@
 
 pub mod bloom;
 pub mod compaction;
+pub mod config;
 pub mod db;
 pub mod error;
 pub mod memtable;
 pub mod sstable;
+pub mod stats;
 pub mod wal;
 
-pub use db::Lsm5;
+pub use db::{Config, DbStats, Lsm5};
 pub use error::{Error, Result};
