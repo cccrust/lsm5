@@ -12,6 +12,10 @@ pub enum Error {
     TransactionError(String),
     NoActiveTransaction,
     TransactionAlreadyCommitted,
+    DatabaseFull,
+    MemoryExceeded,
+    SnapshotNotFound,
+    TaskCancelled(String),
 }
 
 impl std::fmt::Display for Error {
@@ -27,6 +31,10 @@ impl std::fmt::Display for Error {
             Error::TransactionError(msg) => write!(f, "Transaction error: {}", msg),
             Error::NoActiveTransaction => write!(f, "No active transaction"),
             Error::TransactionAlreadyCommitted => write!(f, "Transaction already committed"),
+            Error::DatabaseFull => write!(f, "Database is full"),
+            Error::MemoryExceeded => write!(f, "Memory limit exceeded"),
+            Error::SnapshotNotFound => write!(f, "Snapshot not found"),
+            Error::TaskCancelled(msg) => write!(f, "Task cancelled: {}", msg),
         }
     }
 }
@@ -47,3 +55,14 @@ impl From<io::Error> for Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// Run a closure with panic recovery
+pub fn catch_panic<F, T>(f: F) -> Result<T>
+where
+    F: FnOnce() -> Result<T> + std::panic::UnwindSafe,
+{
+    match std::panic::catch_unwind(f) {
+        Ok(result) => result,
+        Err(_) => Err(Error::Corruption("Operation panicked".into())),
+    }
+}
