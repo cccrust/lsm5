@@ -404,6 +404,10 @@ impl SsTableReader {
     pub fn entry_count(&self) -> usize {
         self.index.len()
     }
+
+    pub fn into_data(self) -> Vec<u8> {
+        self.data
+    }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

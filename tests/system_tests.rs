@@ -52,7 +52,7 @@ fn test_workflow_reopen_with_data() {
     }
 
     {
-        let db = open_db(dir.path());
+        let mut db = open_db(dir.path());
         assert_eq!(db.get("key1").unwrap(), Some(b"val1".to_vec()));
         assert_eq!(db.get("key2").unwrap(), Some(b"val2".to_vec()));
     }

@@ -10,6 +10,8 @@ pub struct DbStats {
     pub writes: u64,
     pub flushes: u64,
     pub compactions: u64,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
 }
 
 impl DbStats {
@@ -38,6 +40,8 @@ impl DbStats {
         writes: u64,
         flushes: u64,
         compactions: u64,
+        cache_hits: u64,
+        cache_misses: u64,
     ) -> Self {
         Self {
             memtable_entries,
@@ -48,7 +52,17 @@ impl DbStats {
             writes,
             flushes,
             compactions,
+            cache_hits,
+            cache_misses,
         }
+    }
+
+    pub fn cache_hit_rate(&self) -> f64 {
+        let total = self.cache_hits + self.cache_misses;
+        if total == 0 {
+            return 0.0;
+        }
+        self.cache_hits as f64 / total as f64
     }
 
     pub fn total_sstables(&self) -> usize {
@@ -115,6 +129,11 @@ impl fmt::Display for DbStats {
         writeln!(f, "  Writes:    {}", self.writes)?;
         writeln!(f, "  Flushes:   {}", self.flushes)?;
         writeln!(f, "  Compactions: {}", self.compactions)?;
+        writeln!(f)?;
+        writeln!(f, "Cache:")?;
+        writeln!(f, "  Hits:    {}", self.cache_hits)?;
+        writeln!(f, "  Misses:  {}", self.cache_misses)?;
+        writeln!(f, "  Hit Rate: {:.1}%", self.cache_hit_rate() * 100.0)?;
         Ok(())
     }
 }

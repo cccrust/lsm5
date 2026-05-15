@@ -31,7 +31,7 @@ fn main() {
     println!("2. 重新開啟資料庫 (WAL 會自動回放):");
     {
         let config = Config::new(dir).memtable_size_limit(1024 * 1024);
-        let db = Lsm5::open(config).unwrap();
+        let mut db = Lsm5::open(config).unwrap();
 
         let data = db.get("important_data").unwrap();
         println!("   讀取 important_data: {:?}", data);
@@ -62,7 +62,7 @@ fn main() {
     println!("4. 驗證資料完整性:");
     {
         let config = Config::new(dir).memtable_size_limit(100);
-        let db = Lsm5::open(config).unwrap();
+        let mut db = Lsm5::open(config).unwrap();
 
         // 檢查之前寫入的資料
         for i in 0..10 {

@@ -10,6 +10,7 @@ pub struct Config {
     pub level_size_multiplier: u64,
     pub compression_enabled: bool,
     pub compression_level: i32,
+    pub cache_size: usize,
 }
 
 impl Config {
@@ -23,6 +24,7 @@ impl Config {
             level_size_multiplier: 10,
             compression_enabled: true,
             compression_level: 3,
+            cache_size: 64 * 1024 * 1024,
         }
     }
 
@@ -58,6 +60,11 @@ impl Config {
 
     pub fn compression_level(mut self, level: i32) -> Self {
         self.compression_level = level.clamp(1, 22);
+        self
+    }
+
+    pub fn cache_size(mut self, bytes: usize) -> Self {
+        self.cache_size = bytes;
         self
     }
 }

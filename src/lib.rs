@@ -8,6 +8,7 @@
 //   Level-1..N SSTables  (sorted, no overlaps within a level)
 
 pub mod bloom;
+pub mod cache;
 pub mod compaction;
 pub mod config;
 pub mod db;

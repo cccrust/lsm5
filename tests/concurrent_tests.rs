@@ -37,7 +37,7 @@ fn test_sequential_writes_with_mutex() {
     h1.join().unwrap();
     h2.join().unwrap();
 
-    let db = db.lock().unwrap();
+    let mut db = db.lock().unwrap();
     assert!(db.get("key-a-0").unwrap().is_some());
     assert!(db.get("key-b-99").unwrap().is_some());
 }
@@ -55,7 +55,7 @@ fn test_concurrent_reads_same_key() {
         .map(|_| {
             let db = Arc::clone(&db);
             thread::spawn(move || {
-                let db = db.lock().unwrap();
+                let mut db = db.lock().unwrap();
                 db.get("shared-key").unwrap()
             })
         })
@@ -82,7 +82,7 @@ fn test_mixed_read_write_with_mutex() {
     let reader = {
         let db = Arc::clone(&db);
         thread::spawn(move || {
-            let db = db.lock().unwrap();
+            let mut db = db.lock().unwrap();
             for i in 0..20 {
                 let _ = db.get(format!("key-{}", i));
             }
@@ -103,7 +103,7 @@ fn test_mixed_read_write_with_mutex() {
     reader.join().unwrap();
     writer.join().unwrap();
 
-    let db = db.lock().unwrap();
+    let mut db = db.lock().unwrap();
     for i in 0..40 {
         assert!(db.get(format!("key-{}", i)).unwrap().is_some());
     }

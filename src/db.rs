@@ -33,11 +33,16 @@ pub struct Lsm5 {
     writes: u64,
     flushes: u64,
     compactions: u64,
+    /// LRU cache for SSTable data
+    cache: crate::cache::LruCache<u64, Vec<u8>>,
+    cache_hits: u64,
+    cache_misses: u64,
 }
 
 impl Lsm5 {
     /// Open (or create) an LSM5 database at the given directory.
     pub fn open(config: Config) -> Result<Self> {
+        let cache_size = config.cache_size;
         fs::create_dir_all(&config.dir)?;
 
         let wal_path = config.dir.join("wal.log");
@@ -74,6 +79,9 @@ impl Lsm5 {
             writes: 0,
             flushes: 0,
             compactions: 0,
+            cache: crate::cache::LruCache::new(cache_size),
+            cache_hits: 0,
+            cache_misses: 0,
         })
     }
 
@@ -172,7 +180,7 @@ impl Lsm5 {
     }
 
     /// Get the value for a key.  Returns None if the key does not exist.
-    pub fn get(&self, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>> {
+    pub fn get(&mut self, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>> {
         let key = key.as_ref();
 
         // 1. Check active MemTable
@@ -208,8 +216,24 @@ impl Lsm5 {
                     continue;
                 }
 
+                // Try cache first
+                if let Some(data) = self.cache.get(&meta.sequence) {
+                    if let Some(v) = Self::get_from_data(data.as_slice(), key) {
+                        self.cache_hits += 1;
+                        return match v {
+                            Value::Data(d) => Ok(Some(d)),
+                            Value::Tombstone => Ok(None),
+                        };
+                    }
+                } else {
+                    self.cache_misses += 1;
+                }
+
                 let reader = SsTableReader::open(&meta.path)?;
                 if let Some(v) = reader.get(key)? {
+                    // Cache the decompressed data for future lookups
+                    self.cache
+                        .put(meta.sequence, reader.into_data(), meta.file_size as usize);
                     return match v {
                         Value::Data(d) => Ok(Some(d)),
                         Value::Tombstone => Ok(None),
@@ -219,6 +243,40 @@ impl Lsm5 {
         }
 
         Ok(None)
+    }
+
+    fn get_from_data(data: &[u8], key: &[u8]) -> Option<Value> {
+        let mut pos = 0usize;
+        while pos + 9 <= data.len() {
+            let kl = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
+                as usize;
+            let vl =
+                u32::from_be_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]])
+                    as usize;
+            let is_tombstone = data[pos + 8] == 1;
+            pos += 9;
+
+            if pos + kl + vl > data.len() {
+                break;
+            }
+
+            let k = &data[pos..pos + kl];
+            pos += kl;
+            let v = &data[pos..pos + vl];
+            pos += vl;
+
+            if k == key {
+                return Some(if is_tombstone {
+                    Value::Tombstone
+                } else {
+                    Value::Data(v.to_vec())
+                });
+            }
+            if k > key {
+                break;
+            }
+        }
+        None
     }
 
     /// Scan all keys in [start, end) range, returning them in sorted order.
@@ -324,6 +382,8 @@ impl Lsm5 {
             self.writes,
             self.flushes,
             self.compactions,
+            self.cache_hits,
+            self.cache_misses,
         )
     }
 
@@ -593,7 +653,7 @@ mod tests {
             // Don't flush — data is only in WAL + MemTable
         }
         // Re-open — should replay WAL
-        let db = open_db(dir.path());
+        let mut db = open_db(dir.path());
         assert_eq!(
             db.get("persistent_key").unwrap(),
             Some(b"persistent_value".to_vec())

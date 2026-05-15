@@ -99,7 +99,7 @@ fn perf_reopen_persistence() {
     }
 
     let start = Instant::now();
-    let db = open_db(dir.path());
+    let mut db = open_db(dir.path());
     let elapsed = start.elapsed().as_millis();
 
     for i in 0..100 {
