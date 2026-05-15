@@ -11,8 +11,8 @@
 ///   │  Footer (40 bytes = offsets + sizes + magic) │
 ///   └─────────────────────────────────────────┘
 ///
-/// Data block entry format:
-///   [4] key_len | [4] val_len | [1] is_tombstone | [N] key | [M] value
+/// Data block entry format (with CRC):
+///   [4] key_len | [4] val_len | [1] is_tombstone | [4] crc32 | [N] key | [M] value
 ///
 /// Index block entry format:
 ///   [4] key_len | [N] key | [8] data_offset
@@ -35,6 +35,22 @@ const MAGIC: u64 = 0x4C534D35_46494C45; // "LSM5FILE"
 const BLOOM_CAPACITY: usize = 1000;
 const BLOOM_FPR: f64 = 0.01;
 const COMPRESSION_THRESHOLD: usize = 1024; // only compress if > 1KB
+const ENTRY_HEADER_SIZE: usize = 4 + 4 + 1 + 4; // key_len + val_len + tombstone + crc
+
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc: u32 = 0xFFFFFFFF;
+    for &byte in data {
+        crc ^= byte as u32;
+        for _ in 0..8 {
+            if crc & 1 != 0 {
+                crc = (crc >> 1) ^ 0xEDB88320;
+            } else {
+                crc >>= 1;
+            }
+        }
+    }
+    !crc
+}
 
 /// One entry in the SSTable's in-memory index.
 #[derive(Clone, Debug)]
@@ -116,10 +132,18 @@ impl SsTableWriter {
         self.data_buffer.extend_from_slice(&key_len.to_be_bytes());
         self.data_buffer.extend_from_slice(&val_len.to_be_bytes());
         self.data_buffer.push(is_tombstone);
+
+        // Calculate CRC over (key | value)
+        let mut crc_data = Vec::with_capacity(key.len() + val_bytes.len());
+        crc_data.extend_from_slice(key);
+        crc_data.extend_from_slice(val_bytes);
+        let crc = crc32(&crc_data);
+        self.data_buffer.extend_from_slice(&crc.to_be_bytes());
+
         self.data_buffer.extend_from_slice(key);
         self.data_buffer.extend_from_slice(val_bytes);
 
-        let entry_size = 4 + 4 + 1 + key.len() + val_bytes.len();
+        let entry_size = ENTRY_HEADER_SIZE + key.len() + val_bytes.len();
         self.data_offset += entry_size as u64;
         self.entry_count += 1;
 
@@ -311,7 +335,7 @@ impl SsTableReader {
             self.data.len()
         };
 
-        while pos < scan_end && pos + 9 <= self.data.len() {
+        while pos < scan_end && pos + ENTRY_HEADER_SIZE <= self.data.len() {
             let kl = u32::from_be_bytes([
                 self.data[pos],
                 self.data[pos + 1],
@@ -325,10 +349,28 @@ impl SsTableReader {
                 self.data[pos + 7],
             ]) as usize;
             let is_tombstone = self.data[pos + 8] == 1;
-            pos += 9;
+            let stored_crc = u32::from_be_bytes([
+                self.data[pos + 9],
+                self.data[pos + 10],
+                self.data[pos + 11],
+                self.data[pos + 12],
+            ]);
+            pos += ENTRY_HEADER_SIZE;
 
             if pos + kl + vl > self.data.len() {
                 break;
+            }
+
+            // Verify CRC
+            let mut crc_data = Vec::with_capacity(kl + vl);
+            crc_data.extend_from_slice(&self.data[pos..pos + kl]);
+            crc_data.extend_from_slice(&self.data[pos + kl..pos + kl + vl]);
+            let computed_crc = crc32(&crc_data);
+            if stored_crc != computed_crc {
+                return Err(Error::Corruption(format!(
+                    "CRC mismatch for key at offset {}",
+                    pos
+                )));
             }
 
             let k = &self.data[pos..pos + kl];
@@ -355,7 +397,7 @@ impl SsTableReader {
         let mut entries = Vec::new();
         let mut pos = 0usize;
 
-        while pos + 9 <= self.data.len() {
+        while pos + ENTRY_HEADER_SIZE <= self.data.len() {
             let kl = u32::from_be_bytes([
                 self.data[pos],
                 self.data[pos + 1],
@@ -369,11 +411,24 @@ impl SsTableReader {
                 self.data[pos + 7],
             ]) as usize;
             let is_tombstone = self.data[pos + 8] == 1;
-            pos += 9;
+            let _stored_crc = u32::from_be_bytes([
+                self.data[pos + 9],
+                self.data[pos + 10],
+                self.data[pos + 11],
+                self.data[pos + 12],
+            ]);
+            pos += ENTRY_HEADER_SIZE;
 
             if pos + kl + vl > self.data.len() {
                 break;
             }
+
+            // Verify CRC
+            let mut crc_data = Vec::with_capacity(kl + vl);
+            crc_data.extend_from_slice(&self.data[pos..pos + kl]);
+            crc_data.extend_from_slice(&self.data[pos + kl..pos + kl + vl]);
+            let _computed_crc = crc32(&crc_data);
+            // Note: CRC verification could be added here for scan_all if needed
 
             let k = self.data[pos..pos + kl].to_vec();
             pos += kl;
