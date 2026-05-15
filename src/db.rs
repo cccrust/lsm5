@@ -194,6 +194,31 @@ impl Lsm5 {
         Ok(result)
     }
 
+    /// Create a forward iterator over keys in [start, end) range.
+    pub fn iterator(
+        &self,
+        start: Option<&[u8]>,
+        end: Option<&[u8]>,
+    ) -> crate::iterator::LsmIterator {
+        let items = self
+            .scan(start.unwrap_or(b""), end.unwrap_or(b"\xff"))
+            .unwrap();
+        crate::iterator::LsmIterator::new(items)
+    }
+
+    /// Create a reverse iterator over keys in [start, end) range.
+    pub fn reverse_iterator(
+        &self,
+        start: Option<&[u8]>,
+        end: Option<&[u8]>,
+    ) -> impl Iterator<Item = (Vec<u8>, Vec<u8>)> {
+        let mut items = self
+            .scan(start.unwrap_or(b""), end.unwrap_or(b"\xff"))
+            .unwrap();
+        items.reverse();
+        items.into_iter()
+    }
+
     /// Force a MemTable flush and compaction cycle.
     pub fn flush(&mut self) -> Result<()> {
         self.flush_memtable()?;

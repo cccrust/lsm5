@@ -12,6 +12,7 @@ pub mod compaction;
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod iterator;
 pub mod memtable;
 pub mod sstable;
 pub mod stats;
@@ -19,3 +20,4 @@ pub mod wal;
 
 pub use db::{Config, DbStats, Lsm5};
 pub use error::{Error, Result};
+pub use iterator::LsmIterator;
