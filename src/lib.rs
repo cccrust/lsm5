@@ -1,0 +1,19 @@
+// lsm5 - A Log-Structured Merge Tree implementation in Rust
+//
+// Architecture:
+//   MemTable  (in-memory BTreeMap, write buffer)
+//     ↓  flush when full
+//   Level-0 SSTables  (sorted, may have overlaps)
+//     ↓  compaction
+//   Level-1..N SSTables  (sorted, no overlaps within a level)
+
+pub mod bloom;
+pub mod error;
+pub mod memtable;
+pub mod sstable;
+pub mod compaction;
+pub mod db;
+pub mod wal;
+
+pub use db::Lsm5;
+pub use error::{Error, Result};
