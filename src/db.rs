@@ -345,7 +345,14 @@ impl Lsm5 {
         let entries = self.memtable.drain_sorted();
         self.seq += 1;
         let path = self.config.dir.join(format!("L0-{:016x}.sst", self.seq));
-        let meta = write_sstable(&path, &entries, 0, self.seq)?;
+        let meta = write_sstable(
+            &path,
+            &entries,
+            0,
+            self.seq,
+            self.config.compression_enabled,
+            self.config.compression_level,
+        )?;
 
         while self.levels.is_empty() {
             self.levels.push(Vec::new());
@@ -430,6 +437,8 @@ impl Lsm5 {
             &mut self.seq,
             is_bottommost,
             self.config.max_sstable_size,
+            self.config.compression_enabled,
+            self.config.compression_level,
         )?;
 
         // Remove old SSTable files

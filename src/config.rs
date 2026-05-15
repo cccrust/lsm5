@@ -8,6 +8,8 @@ pub struct Config {
     pub sync_writes: bool,
     pub l0_compaction_trigger: usize,
     pub level_size_multiplier: u64,
+    pub compression_enabled: bool,
+    pub compression_level: i32,
 }
 
 impl Config {
@@ -19,6 +21,8 @@ impl Config {
             sync_writes: false,
             l0_compaction_trigger: 4,
             level_size_multiplier: 10,
+            compression_enabled: true,
+            compression_level: 3,
         }
     }
 
@@ -44,6 +48,16 @@ impl Config {
 
     pub fn level_size_multiplier(mut self, multiplier: u64) -> Self {
         self.level_size_multiplier = multiplier;
+        self
+    }
+
+    pub fn compression_enabled(mut self, enabled: bool) -> Self {
+        self.compression_enabled = enabled;
+        self
+    }
+
+    pub fn compression_level(mut self, level: i32) -> Self {
+        self.compression_level = level.clamp(1, 22);
         self
     }
 }

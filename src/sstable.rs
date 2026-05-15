@@ -2,13 +2,13 @@
 ///
 /// File layout:
 ///   ┌─────────────────────────────────────────┐
-///   │  Data Block  (sorted key-value entries)  │
+///   │  Data Block  (sorted key-value entries)  │ <- optionally zstd compressed
 ///   ├─────────────────────────────────────────┤
 ///   │  Index Block (key → data offset map)    │
 ///   ├─────────────────────────────────────────┤
 ///   │  Bloom Filter Block                     │
 ///   ├─────────────────────────────────────────┤
-///   │  Footer (8+8+8 bytes = offsets + magic) │
+///   │  Footer (40 bytes = offsets + sizes + magic) │
 ///   └─────────────────────────────────────────┘
 ///
 /// Data block entry format:
@@ -20,8 +20,8 @@
 /// Bloom filter block:
 ///   [8] num_bits | [8] num_hashes | [num_bits/8 rounded up] bit data
 ///
-/// Footer (32 bytes):
-///   [8] index_offset | [8] bloom_offset | [8] data_len | [8] magic=0x4C534D35_46494C45
+/// Footer (40 bytes):
+///   [8] index_offset | [8] bloom_offset | [8] data_len | [8] compressed_len | [8] magic=0x4C534D35_46494C45
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -29,10 +29,12 @@ use std::path::{Path, PathBuf};
 use crate::bloom::BloomFilter;
 use crate::error::{Error, Result};
 use crate::memtable::Value;
+use zstd::stream::write::Encoder;
 
 const MAGIC: u64 = 0x4C534D35_46494C45; // "LSM5FILE"
 const BLOOM_CAPACITY: usize = 1000;
 const BLOOM_FPR: f64 = 0.01;
+const COMPRESSION_THRESHOLD: usize = 1024; // only compress if > 1KB
 
 /// One entry in the SSTable's in-memory index.
 #[derive(Clone, Debug)]
@@ -58,14 +60,22 @@ pub struct SsTableWriter {
     writer: BufWriter<File>,
     index: Vec<IndexEntry>,
     bloom: BloomFilter,
+    data_buffer: Vec<u8>,
     data_offset: u64,
     entry_count: usize,
     min_key: Option<Vec<u8>>,
     max_key: Option<Vec<u8>>,
+    compression_enabled: bool,
+    compression_level: i32,
 }
 
 impl SsTableWriter {
-    pub fn create(path: impl AsRef<Path>, capacity_hint: usize) -> Result<Self> {
+    pub fn create(
+        path: impl AsRef<Path>,
+        capacity_hint: usize,
+        compression_enabled: bool,
+        compression_level: i32,
+    ) -> Result<Self> {
         let file = OpenOptions::new()
             .create(true)
             .write(true)
@@ -76,10 +86,13 @@ impl SsTableWriter {
             writer: BufWriter::new(file),
             index: Vec::new(),
             bloom: BloomFilter::new(bloom_cap, BLOOM_FPR),
+            data_buffer: Vec::new(),
             data_offset: 0,
             entry_count: 0,
             min_key: None,
             max_key: None,
+            compression_enabled,
+            compression_level,
         })
     }
 
@@ -100,11 +113,11 @@ impl SsTableWriter {
         let key_len = key.len() as u32;
         let val_len = val_bytes.len() as u32;
 
-        self.writer.write_all(&key_len.to_be_bytes())?;
-        self.writer.write_all(&val_len.to_be_bytes())?;
-        self.writer.write_all(&[is_tombstone])?;
-        self.writer.write_all(key)?;
-        self.writer.write_all(val_bytes)?;
+        self.data_buffer.extend_from_slice(&key_len.to_be_bytes());
+        self.data_buffer.extend_from_slice(&val_len.to_be_bytes());
+        self.data_buffer.push(is_tombstone);
+        self.data_buffer.extend_from_slice(key);
+        self.data_buffer.extend_from_slice(val_bytes);
 
         let entry_size = 4 + 4 + 1 + key.len() + val_bytes.len();
         self.data_offset += entry_size as u64;
@@ -120,8 +133,25 @@ impl SsTableWriter {
 
     /// Finish writing and flush the index + bloom + footer.
     pub fn finish(mut self) -> Result<(SsTableMeta, PathBuf)> {
-        // Write index block
-        let index_offset = self.data_offset;
+        // Compress data block if enabled and large enough
+        let (compressed_data, compressed_len) =
+            if self.compression_enabled && self.data_buffer.len() > COMPRESSION_THRESHOLD {
+                let mut encoder = Encoder::new(Vec::new(), self.compression_level)?;
+                encoder.write_all(&self.data_buffer)?;
+                let compressed = encoder.finish()?;
+                let len = compressed.len() as u64;
+                (compressed, len)
+            } else {
+                (std::mem::take(&mut self.data_buffer), self.data_offset)
+            };
+
+        // Write (compressed) data block
+        self.writer.write_all(&compressed_data)?;
+        let data_len = self.data_offset;
+
+        // Write index block (always after compressed data)
+        let index_offset = compressed_len;
+
         for entry in &self.index {
             let kl = entry.key.len() as u32;
             self.writer.write_all(&kl.to_be_bytes())?;
@@ -139,10 +169,11 @@ impl SsTableWriter {
             self.writer.write_all(&word.to_le_bytes())?;
         }
 
-        // Write footer
+        // Write footer: index_offset, bloom_offset, data_len, compressed_len, magic
         self.writer.write_all(&index_offset.to_be_bytes())?;
         self.writer.write_all(&bloom_offset.to_be_bytes())?;
-        self.writer.write_all(&self.data_offset.to_be_bytes())?;
+        self.writer.write_all(&data_len.to_be_bytes())?;
+        self.writer.write_all(&compressed_len.to_be_bytes())?;
         self.writer.write_all(&MAGIC.to_be_bytes())?;
 
         self.writer.flush()?;
@@ -179,11 +210,14 @@ impl SsTableWriter {
 }
 
 /// Reader: open an existing SSTable and perform point lookups + scans.
+#[allow(dead_code)]
 pub struct SsTableReader {
     path: PathBuf,
     index: Vec<IndexEntry>,
     bloom: BloomFilter,
     data_len: u64,
+    compressed_len: u64,
+    data: Vec<u8>,
 }
 
 impl SsTableReader {
@@ -192,20 +226,32 @@ impl SsTableReader {
         let mut file = File::open(&path)?;
         let file_len = file.metadata()?.len();
 
-        if file_len < 32 {
+        if file_len < 40 {
             return Err(Error::Corruption("SSTable too small".into()));
         }
 
-        // Read footer (last 32 bytes)
-        file.seek(SeekFrom::End(-32))?;
+        // Read footer (last 40 bytes)
+        file.seek(SeekFrom::End(-40))?;
         let index_offset = read_u64(&mut file)?;
         let bloom_offset = read_u64(&mut file)?;
         let data_len = read_u64(&mut file)?;
+        let compressed_len = read_u64(&mut file)?;
         let magic = read_u64(&mut file)?;
 
         if magic != MAGIC {
             return Err(Error::Corruption(format!("Bad magic: 0x{:016X}", magic)));
         }
+
+        // Read and decompress data block
+        file.seek(SeekFrom::Start(0))?;
+        let mut data = vec![0u8; compressed_len as usize];
+        file.read_exact(&mut data)?;
+
+        let data = if compressed_len != data_len {
+            zstd::decode_all(data.as_slice())?
+        } else {
+            data
+        };
 
         // Read index block
         file.seek(SeekFrom::Start(index_offset))?;
@@ -239,6 +285,8 @@ impl SsTableReader {
             index,
             bloom,
             data_len,
+            compressed_len,
+            data,
         })
     }
 
@@ -255,38 +303,47 @@ impl SsTableReader {
             Err(i) => i - 1,
         };
 
-        // Scan forward from that offset looking for our key.
-        let mut file = File::open(&self.path)?;
-        file.seek(SeekFrom::Start(self.index[idx].offset))?;
-
+        // Scan forward from that offset in the decompressed data.
+        let mut pos = self.index[idx].offset as usize;
         let scan_end = if idx + 1 < self.index.len() {
-            self.index[idx + 1].offset
+            self.index[idx + 1].offset as usize
         } else {
-            self.data_len
+            self.data.len()
         };
 
-        let mut pos = self.index[idx].offset;
-        while pos < scan_end {
-            let kl = read_u32_file(&mut file)? as usize;
-            let vl = read_u32_file(&mut file)? as usize;
-            let mut ts_buf = [0u8; 1];
-            file.read_exact(&mut ts_buf)?;
-            let is_tombstone = ts_buf[0] == 1;
+        while pos < scan_end && pos + 9 <= self.data.len() {
+            let kl = u32::from_be_bytes([
+                self.data[pos],
+                self.data[pos + 1],
+                self.data[pos + 2],
+                self.data[pos + 3],
+            ]) as usize;
+            let vl = u32::from_be_bytes([
+                self.data[pos + 4],
+                self.data[pos + 5],
+                self.data[pos + 6],
+                self.data[pos + 7],
+            ]) as usize;
+            let is_tombstone = self.data[pos + 8] == 1;
+            pos += 9;
 
-            let mut k = vec![0u8; kl];
-            let mut v = vec![0u8; vl];
-            file.read_exact(&mut k)?;
-            file.read_exact(&mut v)?;
-            pos += (4 + 4 + 1 + kl + vl) as u64;
+            if pos + kl + vl > self.data.len() {
+                break;
+            }
 
-            if k.as_slice() == key {
+            let k = &self.data[pos..pos + kl];
+            pos += kl;
+            let v = &self.data[pos..pos + vl];
+            pos += vl;
+
+            if k == key {
                 return Ok(Some(if is_tombstone {
                     Value::Tombstone
                 } else {
-                    Value::Data(v)
+                    Value::Data(v.to_vec())
                 }));
             }
-            if k.as_slice() > key {
+            if k > key {
                 break;
             }
         }
@@ -295,22 +352,34 @@ impl SsTableReader {
 
     /// Return all entries (key, value) in sorted order (for compaction / range scans).
     pub fn scan_all(&self) -> Result<Vec<(Vec<u8>, Value)>> {
-        let mut file = File::open(&self.path)?;
-        file.seek(SeekFrom::Start(0))?;
         let mut entries = Vec::new();
-        let mut pos: u64 = 0;
+        let mut pos = 0usize;
 
-        while pos < self.data_len {
-            let kl = read_u32_file(&mut file)? as usize;
-            let vl = read_u32_file(&mut file)? as usize;
-            let mut ts_buf = [0u8; 1];
-            file.read_exact(&mut ts_buf)?;
-            let is_tombstone = ts_buf[0] == 1;
-            let mut k = vec![0u8; kl];
-            let mut v = vec![0u8; vl];
-            file.read_exact(&mut k)?;
-            file.read_exact(&mut v)?;
-            pos += (4 + 4 + 1 + kl + vl) as u64;
+        while pos + 9 <= self.data.len() {
+            let kl = u32::from_be_bytes([
+                self.data[pos],
+                self.data[pos + 1],
+                self.data[pos + 2],
+                self.data[pos + 3],
+            ]) as usize;
+            let vl = u32::from_be_bytes([
+                self.data[pos + 4],
+                self.data[pos + 5],
+                self.data[pos + 6],
+                self.data[pos + 7],
+            ]) as usize;
+            let is_tombstone = self.data[pos + 8] == 1;
+            pos += 9;
+
+            if pos + kl + vl > self.data.len() {
+                break;
+            }
+
+            let k = self.data[pos..pos + kl].to_vec();
+            pos += kl;
+            let v = self.data[pos..pos + vl].to_vec();
+            pos += vl;
+
             entries.push((
                 k,
                 if is_tombstone {
@@ -344,8 +413,11 @@ pub fn write_sstable(
     entries: &[(Vec<u8>, Value)],
     level: usize,
     sequence: u64,
+    compression_enabled: bool,
+    compression_level: i32,
 ) -> Result<SsTableMeta> {
-    let mut writer = SsTableWriter::create(path, entries.len())?;
+    let mut writer =
+        SsTableWriter::create(path, entries.len(), compression_enabled, compression_level)?;
     for (k, v) in entries {
         writer.add(k, v)?;
     }
@@ -382,7 +454,7 @@ mod tests {
             (b"banana".to_vec(), Value::Data(b"yellow".to_vec())),
             (b"cherry".to_vec(), Value::Tombstone),
         ];
-        write_sstable(&path, &entries, 0, 1).unwrap();
+        write_sstable(&path, &entries, 0, 1, true, 3).unwrap();
 
         let reader = SsTableReader::open(&path).unwrap();
         assert_eq!(
@@ -409,7 +481,7 @@ mod tests {
                 )
             })
             .collect();
-        write_sstable(&path, &entries, 0, 1).unwrap();
+        write_sstable(&path, &entries, 0, 1, true, 3).unwrap();
 
         let reader = SsTableReader::open(&path).unwrap();
         let all = reader.scan_all().unwrap();

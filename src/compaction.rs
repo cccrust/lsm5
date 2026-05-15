@@ -132,6 +132,7 @@ pub fn read_sstables(metas: &[&SsTableMeta]) -> Result<SstableEntries> {
 
 /// Compact a set of SSTables into one or more output SSTables at `target_level`.
 /// Returns metadata of the newly written SSTables.
+#[allow(clippy::too_many_arguments)]
 pub fn compact(
     inputs: &[&SsTableMeta],
     output_dir: &Path,
@@ -139,6 +140,8 @@ pub fn compact(
     next_seq: &mut u64,
     is_bottommost: bool,
     max_sstable_size: u64,
+    compression_enabled: bool,
+    compression_level: i32,
 ) -> Result<Vec<SsTableMeta>> {
     if inputs.is_empty() {
         return Ok(vec![]);
@@ -169,7 +172,14 @@ pub fn compact(
         }
         *seq += 1;
         let path = output_dir.join(format!("L{}-{:016x}.sst", target_level, *seq));
-        let meta = write_sstable(&path, chunk, target_level, *seq)?;
+        let meta = write_sstable(
+            &path,
+            chunk,
+            target_level,
+            *seq,
+            compression_enabled,
+            compression_level,
+        )?;
         metas.push(meta);
         chunk.clear();
         Ok(())
