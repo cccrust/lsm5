@@ -11,6 +11,7 @@ pub struct Config {
     pub compression_enabled: bool,
     pub compression_level: i32,
     pub cache_size: usize,
+    pub scan_cache_size: usize,
     pub monitoring_enabled: bool,
     pub monitoring_port: u16,
     pub background_threads: usize,
@@ -28,6 +29,7 @@ impl Config {
             compression_enabled: true,
             compression_level: 3,
             cache_size: 64 * 1024 * 1024,
+            scan_cache_size: 32 * 1024 * 1024,
             monitoring_enabled: false,
             monitoring_port: 8080,
             background_threads: 2,
@@ -86,6 +88,11 @@ impl Config {
 
     pub fn background_threads(mut self, n: usize) -> Self {
         self.background_threads = n.max(1);
+        self
+    }
+
+    pub fn scan_cache_size(mut self, bytes: usize) -> Self {
+        self.scan_cache_size = bytes;
         self
     }
 }
