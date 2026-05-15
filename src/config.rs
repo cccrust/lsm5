@@ -13,6 +13,7 @@ pub struct Config {
     pub cache_size: usize,
     pub monitoring_enabled: bool,
     pub monitoring_port: u16,
+    pub background_threads: usize,
 }
 
 impl Config {
@@ -29,6 +30,7 @@ impl Config {
             cache_size: 64 * 1024 * 1024,
             monitoring_enabled: false,
             monitoring_port: 8080,
+            background_threads: 2,
         }
     }
 
@@ -79,6 +81,11 @@ impl Config {
 
     pub fn monitoring_port(mut self, port: u16) -> Self {
         self.monitoring_port = port;
+        self
+    }
+
+    pub fn background_threads(mut self, n: usize) -> Self {
+        self.background_threads = n.max(1);
         self
     }
 }

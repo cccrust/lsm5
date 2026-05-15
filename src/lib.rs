@@ -7,6 +7,7 @@
 //     ↓  compaction
 //   Level-1..N SSTables  (sorted, no overlaps within a level)
 
+pub mod background;
 pub mod bloom;
 pub mod cache;
 pub mod compaction;
