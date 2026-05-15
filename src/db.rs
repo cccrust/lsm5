@@ -25,7 +25,9 @@ pub struct Lsm5 {
     imm_memtables: Vec<Vec<(Vec<u8>, Value)>>,
     /// SSTables organised per level.  levels[0] is L0.
     levels: Vec<Vec<SsTableMeta>>,
-    seq: u64, // monotonic sequence number for SSTable filenames
+    seq: u64,
+    /// Active transaction (if any)
+    transaction: Option<crate::transaction::Transaction>,
 }
 
 impl Lsm5 {
@@ -62,6 +64,7 @@ impl Lsm5 {
             imm_memtables: Vec::new(),
             levels,
             seq,
+            transaction: None,
         })
     }
 
@@ -90,6 +93,72 @@ impl Lsm5 {
         self.memtable.delete(key);
         self.maybe_flush()?;
         Ok(())
+    }
+
+    /// Begin a new transaction.
+    pub fn begin(&mut self) {
+        if self.transaction.is_none() {
+            self.transaction = Some(crate::transaction::Transaction::new());
+        }
+    }
+
+    /// Put a key-value pair within a transaction.
+    pub fn tx_put(&mut self, key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) -> Result<()> {
+        match &mut self.transaction {
+            Some(tx) => {
+                tx.put(key.into(), value.into());
+                Ok(())
+            }
+            None => Err(crate::error::Error::NoActiveTransaction),
+        }
+    }
+
+    /// Delete a key within a transaction.
+    pub fn tx_delete(&mut self, key: impl Into<Vec<u8>>) -> Result<()> {
+        match &mut self.transaction {
+            Some(tx) => {
+                tx.delete(key.into());
+                Ok(())
+            }
+            None => Err(crate::error::Error::NoActiveTransaction),
+        }
+    }
+
+    /// Commit the current transaction.
+    pub fn commit(&mut self) -> Result<()> {
+        match self.transaction.take() {
+            Some(mut tx) => {
+                if tx.is_committed() {
+                    return Err(crate::error::Error::TransactionAlreadyCommitted);
+                }
+                tx.commit();
+                tx.apply_to_wal(&mut self.wal)?;
+                if self.config.sync_writes {
+                    self.wal.sync()?;
+                }
+                tx.apply_to_memtable(&mut self.memtable)?;
+                self.maybe_flush()?;
+                Ok(())
+            }
+            None => Err(crate::error::Error::NoActiveTransaction),
+        }
+    }
+
+    /// Rollback the current transaction.
+    pub fn rollback(&mut self) -> Result<()> {
+        match &mut self.transaction {
+            Some(tx) => {
+                tx.rollback();
+                self.transaction = None;
+                Ok(())
+            }
+            None => Err(crate::error::Error::NoActiveTransaction),
+        }
+    }
+
+    /// Check if there's an active transaction.
+    pub fn has_transaction(&self) -> bool {
+        self.transaction.is_some()
     }
 
     /// Get the value for a key.  Returns None if the key does not exist.

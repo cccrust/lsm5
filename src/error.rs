@@ -9,6 +9,9 @@ pub enum Error {
     InvalidConfig(String),
     FileFormatError(String),
     CompactionError(String),
+    TransactionError(String),
+    NoActiveTransaction,
+    TransactionAlreadyCommitted,
 }
 
 impl std::fmt::Display for Error {
@@ -21,6 +24,9 @@ impl std::fmt::Display for Error {
             Error::InvalidConfig(msg) => write!(f, "Invalid configuration: {}", msg),
             Error::FileFormatError(msg) => write!(f, "File format error: {}", msg),
             Error::CompactionError(msg) => write!(f, "Compaction error: {}", msg),
+            Error::TransactionError(msg) => write!(f, "Transaction error: {}", msg),
+            Error::NoActiveTransaction => write!(f, "No active transaction"),
+            Error::TransactionAlreadyCommitted => write!(f, "Transaction already committed"),
         }
     }
 }
