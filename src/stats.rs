@@ -1,11 +1,15 @@
 use std::fmt;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct DbStats {
     pub memtable_entries: usize,
     pub memtable_size_bytes: usize,
     pub level_counts: Vec<usize>,
     pub level_sizes: Vec<u64>,
+    pub reads: u64,
+    pub writes: u64,
+    pub flushes: u64,
+    pub compactions: u64,
 }
 
 impl DbStats {
@@ -20,6 +24,30 @@ impl DbStats {
             memtable_size_bytes,
             level_counts,
             level_sizes,
+            ..Default::default()
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_metrics(
+        memtable_entries: usize,
+        memtable_size_bytes: usize,
+        level_counts: Vec<usize>,
+        level_sizes: Vec<u64>,
+        reads: u64,
+        writes: u64,
+        flushes: u64,
+        compactions: u64,
+    ) -> Self {
+        Self {
+            memtable_entries,
+            memtable_size_bytes,
+            level_counts,
+            level_sizes,
+            reads,
+            writes,
+            flushes,
+            compactions,
         }
     }
 
@@ -50,6 +78,22 @@ impl DbStats {
     pub fn is_compaction_needed(&self, level: usize, threshold: u64) -> bool {
         self.level_sizes.get(level).is_some_and(|&s| s > threshold)
     }
+
+    pub fn increment_reads(&mut self) {
+        self.reads += 1;
+    }
+
+    pub fn increment_writes(&mut self) {
+        self.writes += 1;
+    }
+
+    pub fn increment_flushes(&mut self) {
+        self.flushes += 1;
+    }
+
+    pub fn increment_compactions(&mut self) {
+        self.compactions += 1;
+    }
 }
 
 impl fmt::Display for DbStats {
@@ -65,6 +109,12 @@ impl fmt::Display for DbStats {
                 writeln!(f, "  L{}: {} SSTables, {} bytes", i, count, size)?;
             }
         }
+        writeln!(f)?;
+        writeln!(f, "Operations:")?;
+        writeln!(f, "  Reads:     {}", self.reads)?;
+        writeln!(f, "  Writes:    {}", self.writes)?;
+        writeln!(f, "  Flushes:   {}", self.flushes)?;
+        writeln!(f, "  Compactions: {}", self.compactions)?;
         Ok(())
     }
 }

@@ -28,6 +28,11 @@ pub struct Lsm5 {
     seq: u64,
     /// Active transaction (if any)
     transaction: Option<crate::transaction::Transaction>,
+    /// Metrics tracking
+    reads: u64,
+    writes: u64,
+    flushes: u64,
+    compactions: u64,
 }
 
 impl Lsm5 {
@@ -65,6 +70,10 @@ impl Lsm5 {
             levels,
             seq,
             transaction: None,
+            reads: 0,
+            writes: 0,
+            flushes: 0,
+            compactions: 0,
         })
     }
 
@@ -79,6 +88,7 @@ impl Lsm5 {
             self.wal.sync()?;
         }
         self.memtable.put(key, value);
+        self.writes += 1;
         self.maybe_flush()?;
         Ok(())
     }
@@ -302,7 +312,7 @@ impl Lsm5 {
 
     /// Return database statistics.
     pub fn stats(&self) -> DbStats {
-        DbStats::new(
+        DbStats::with_metrics(
             self.memtable.len(),
             self.memtable.size_bytes(),
             self.levels.iter().map(|l| l.len()).collect(),
@@ -310,6 +320,10 @@ impl Lsm5 {
                 .iter()
                 .map(|l| l.iter().map(|m| m.file_size).sum())
                 .collect(),
+            self.reads,
+            self.writes,
+            self.flushes,
+            self.compactions,
         )
     }
 
@@ -337,6 +351,8 @@ impl Lsm5 {
             self.levels.push(Vec::new());
         }
         self.levels[0].push(meta);
+
+        self.flushes += 1;
 
         // Truncate WAL — data is now safely on disk as an SSTable.
         self.wal.truncate()?;
@@ -430,6 +446,8 @@ impl Lsm5 {
         for path in paths_to_remove {
             let _ = fs::remove_file(path);
         }
+
+        self.compactions += 1;
 
         Ok(())
     }
